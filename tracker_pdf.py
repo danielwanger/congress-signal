@@ -56,6 +56,13 @@ TICKER_REGEX = re.compile(r"\(([A-Z]{1,6})\)")
 DATE_REGEX = re.compile(r"\d{2}/\d{2}/\d{4}")
 TRANSACTION_TYPE_REGEX = re.compile(r"^[PSE]$")
 DOLLAR_AMOUNT_REGEX = re.compile(r"\$[\d,]+")
+ASSET_TYPE_REGEX = re.compile(r"\[([A-Z]{1,4})\]")
+OWNER_CODE_REGEX = re.compile(r"(?<![A-Za-z])(SP|JT|DC)(?![A-Za-z])")
+PARTIAL_REGEX = re.compile(r"\(partial\)", re.IGNORECASE)
+# "D" gefolgt von Steuerzeichen (Font-Encoding-Artefakt in den PDFs)
+# und ":" markiert den Beginn des Beschreibungstexts, z.B.
+# "D\x00\x00...: Purchased 20 call options..." bzw. sauber "Description: ...".
+DESCRIPTION_REGEX = re.compile(r"D[\x00-\x1f]*\s*:\s*(.+)", re.DOTALL)
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +195,29 @@ def parse_transaction_row(row: list) -> dict | None:
         if word_match:
             type_match = word_match.group(0)
 
+    # "(partial)"-Zusatz bei Teilverkäufen z.B. "S (partial)"
+    if type_match and PARTIAL_REGEX.search(full_text):
+        type_match = f"{type_match} (partial)"
+
+    # Asset-Type: [ST]=Aktie, [OP]=Option, etc. — steht direkt hinter der
+    # Ticker-Klammer, z.B. "(AAPL) [ST]"
+    asset_type_match = ASSET_TYPE_REGEX.search(
+        full_text[ticker_match.end():ticker_match.end() + 20]
+    )
+    asset_type = asset_type_match.group(1) if asset_type_match else "?"
+
+    # Owner-Code: SP=Ehepartner, JT=Gemeinsam, DC=Kind, sonst Filer selbst
+    owner_match = OWNER_CODE_REGEX.search(full_text)
+    owner_code = owner_match.group(1) if owner_match else "Filer"
+
+    # Beschreibungstext (bei Optionen z.B. Strike-Preis, Ablaufdatum)
+    description_match = DESCRIPTION_REGEX.search(full_text)
+    description = ""
+    if description_match:
+        description = description_match.group(1)
+        description = description.replace("\x00", "").strip()
+        description = re.sub(r"\s+", " ", description)
+
     # Asset-Name: alles vor der Ticker-Klammer aus der Zelle, die den Ticker enthält
     asset_name = full_text
     for cell in cells:
@@ -204,11 +234,14 @@ def parse_transaction_row(row: list) -> dict | None:
 
     return {
         "asset": asset_name or "Unbekannt",
+        "asset_type": asset_type,
+        "owner_code": owner_code,
         "ticker": ticker_match.group(1),
         "transaction_type": type_match or "?",
         "trade_date": dates[0],
         "notification_date": dates[1] if len(dates) > 1 else dates[0],
         "amount_range": amount_range,
+        "description": description,
     }
 
 
@@ -241,15 +274,28 @@ def send_telegram_message(text: str) -> bool:
 
 
 def format_message(filer: str, tx: dict, source_url: str) -> str:
-    return (
-        f"Neuer Congress-Trade erkannt\n"
-        f"👤 {filer}\n"
-        f"📈 {tx['ticker']} — {tx['asset'].strip()}\n"
-        f"🔁 Typ: {tx['transaction_type']}\n"
-        f"💰 Betrag (Range): {tx['amount_range']}\n"
-        f"🗓 Trade-Datum: {tx['trade_date']}\n"
-        f"📄 Quelle: {source_url}"
-    )
+    owner_label = {
+        "SP": "Ehepartner",
+        "JT": "Gemeinsames Konto",
+        "DC": "Kind",
+        "Filer": filer,
+    }.get(tx["owner_code"], tx["owner_code"])
+
+    lines = [
+        "Neuer Congress-Trade erkannt",
+        f"👤 {filer} ({owner_label})",
+        f"📈 {tx['ticker']} — {tx['asset'].strip()} [{tx['asset_type']}]",
+        f"🔁 Typ: {tx['transaction_type']}",
+        f"💰 Betrag (Range): {tx['amount_range']}",
+        f"🗓 Trade-Datum: {tx['trade_date']}",
+    ]
+    if tx["notification_date"] != tx["trade_date"]:
+        lines.append(f"📬 Gemeldet am: {tx['notification_date']}")
+    if tx["description"]:
+        lines.append(f"📝 {tx['description']}")
+    lines.append(f"📄 Quelle: {source_url}")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

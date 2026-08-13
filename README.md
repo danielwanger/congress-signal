@@ -92,6 +92,12 @@ im Actions-Tab auslösen.
   können vereinzelt übersehen werden (Tabellen werden pro Seite
   extrahiert, nicht seitenübergreifend zusammengeführt). Betrifft laut
   Stichprobe ca. 1 von 18 Zeilen — bekannte Lücke, noch nicht behoben.
+- Der Beschreibungstext (Strike-Preis, Ablaufdatum bei Optionen) wird
+  bei "sauber" gesplitteten Tabellenzeilen manchmal nicht erfasst, da
+  er dort in einer separaten Fortsetzungszeile steht, die nicht mit
+  der Haupt-Transaktionszeile zusammengeführt wird. Betrifft laut
+  Stichprobe vor allem einzelne Zeilen — Feld bleibt dann leer statt
+  falsch.
 - Nur House-Disclosures (Repräsentantenhaus). Senat-Filings laufen
   über ein separates System (`efdsearch.senate.gov`) und sind hier
   noch nicht eingebunden.
