@@ -232,9 +232,11 @@ def send_telegram_message(text: str) -> bool:
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
         "parse_mode": "Markdown",
-        "disable_web_page_preview": True,
+        "disable_web_page_preview": "true",
     }
     response = requests.post(url, data=payload, timeout=15)
+    if not response.ok:
+        print(f"Telegram-API-Fehler ({response.status_code}): {response.text}")
     response.raise_for_status()
     return True
 
