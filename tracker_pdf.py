@@ -7,16 +7,15 @@ Transaction Reports (PTRs) des House Clerk.
 WICHTIG — bitte vor dem ersten produktiven Lauf verifizieren:
 Der Bulk-Index-Endpunkt (BULK_INDEX_URL) folgt einem seit Jahren
 dokumentierten, aber inoffiziellen Muster:
-    https://disclosures-clerk.house.gov/public_disc/financial-pdfs/{JAHR}FD.zip
+    Index: https://disclosures-clerk.house.gov/public_disc/financial-pdfs/{JAHR}FD.zip
+    PDFs:  https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/{JAHR}/{DocID}.pdf
 Das ZIP enthält eine {JAHR}FD.xml mit einem Eintrag pro Filing
-(Name, DocID, FilingType) sowie die einzelnen PDFs.
-Dieses Skript konnte in der Entwicklungsumgebung NICHT gegen die
-echte Seite getestet werden (Netzwerk-Sandbox blockiert house.gov).
-Vor dem Cron-Einsatz also unbedingt einmal lokal laufen lassen und
-- prüfen ob der Download klappt (HTTP 200, gültiges ZIP)
-- die Text-Extraktion an 2-3 echten PDFs stichprobenartig prüfen
-- ggf. TRANSACTION_LINE_REGEX an das tatsächliche PDF-Layout anpassen
-  (Layouts können sich zwischen Jahren/Formularversionen unterscheiden)
+(Name, DocID, FilingType).
+Beide URLs wurden am 13.08.2026 manuell gegen echte Filings
+verifiziert (u.a. Pelosi-PTRs 2026). Trotzdem: PDF-Layouts können
+sich zwischen Formularversionen ändern — bei 0 Treffern trotz
+vorhandener Filings die Tabellenstruktur in parse_transaction_row()
+prüfen.
 
 Nur FilingType "P" (Periodic Transaction Report) ist relevant —
 andere Typen (jährliche FD-Reports, Kandidaten-Filings) werden
@@ -49,20 +48,14 @@ WATCHLIST = [
 
 FILING_YEAR = os.environ.get("FILING_YEAR", "2026")
 BULK_INDEX_URL = f"https://disclosures-clerk.house.gov/public_disc/financial-pdfs/{FILING_YEAR}FD.zip"
-PDF_BASE_URL = f"https://disclosures-clerk.house.gov/public_disc/financial-pdfs/{FILING_YEAR}"
+PDF_BASE_URL = f"https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/{FILING_YEAR}"
 
 STATE_FILE = Path(__file__).parent / "state" / "seen_filings.json"
 
-# Grobes Muster für eine Transaktionszeile in einer PTR-PDF, z.B.:
-# "NVIDIA CORP (NVDA) [ST] P 06/20/2025 06/25/2025 $500,001 - $1,000,000"
-TRANSACTION_LINE_REGEX = re.compile(
-    r"(?P<asset>[A-Z][A-Za-z0-9&.,'\-\s]+?)\s*\((?P<ticker>[A-Z]{1,6})\)\s*"
-    r"\[(?P<asset_type>\w+)\]\s*"
-    r"(?P<transaction_type>P|S|E)\s+"
-    r"(?P<trade_date>\d{2}/\d{2}/\d{4})\s+"
-    r"(?P<notification_date>\d{2}/\d{2}/\d{4})\s+"
-    r"(?P<amount_range>\$[\d,]+\s*-\s*\$[\d,]+)"
-)
+TICKER_REGEX = re.compile(r"\(([A-Z]{1,6})\)")
+DATE_REGEX = re.compile(r"\d{2}/\d{2}/\d{4}")
+TRANSACTION_TYPE_REGEX = re.compile(r"^[PSE]$")
+DOLLAR_AMOUNT_REGEX = re.compile(r"\$[\d,]+")
 
 
 # ---------------------------------------------------------------------------
@@ -125,16 +118,98 @@ def fetch_filing_index() -> list[dict]:
 # PDF laden und Transaktionen extrahieren
 # ---------------------------------------------------------------------------
 def extract_transactions(pdf_url: str) -> list[dict]:
+    """
+    Nutzt pdfplumbers Tabellenerkennung statt reinem Fließtext-Regex,
+    weil PTR-PDFs mehrspaltige Tabellen enthalten, deren Zellinhalte
+    beim reinen Text-Extract nicht zuverlässig in Lesereihenfolge
+    herauskommen.
+    """
     response = requests.get(pdf_url, timeout=60)
     response.raise_for_status()
 
     transactions = []
     with pdfplumber.open(io.BytesIO(response.content)) as pdf:
         for page in pdf.pages:
-            text = page.extract_text() or ""
-            for match in TRANSACTION_LINE_REGEX.finditer(text):
-                transactions.append(match.groupdict())
+            for table in page.extract_tables():
+                for row in table:
+                    tx = parse_transaction_row(row)
+                    if tx:
+                        transactions.append(tx)
     return transactions
+
+
+def parse_transaction_row(row: list) -> dict | None:
+    """
+    Erwartet eine Tabellenzeile im Stil der House-PTR-Tabelle:
+    [ID, Owner, Asset (inkl. Ticker/Typ), Transaction Type, Date,
+     Notification Date, Amount, Cap Gains?]
+    Zellinhalte können None oder mehrzeilige Strings sein. Die genaue
+    Spaltenzahl variiert zwischen Filings, daher wird nur ein Minimum
+    geprüft statt exakt 8 Spalten vorauszusetzen.
+    """
+    if not row or len(row) < 3:
+        return None
+
+    cells = [str(c).strip() if c else "" for c in row]
+    full_text = " ".join(cells)
+
+    ticker_match = TICKER_REGEX.search(full_text)
+    if not ticker_match:
+        return None  # keine Aktie in dieser Zeile (z.B. Header oder Fußnote)
+
+    dates = DATE_REGEX.findall(full_text)
+    if len(dates) < 1:
+        return None
+
+    amount_matches = DOLLAR_AMOUNT_REGEX.findall(full_text.replace("\n", " "))
+    if len(amount_matches) >= 2:
+        # In manchen Zeilen steht z.B. der Ticker zwischen den beiden
+        # Beträgen (pdfplumber-Layout-Artefakt), daher werden hier bewusst
+        # die ersten zwei $-Beträge im Text genommen statt ein
+        # zusammenhängendes "$X - $Y"-Muster zu verlangen.
+        amount_range = f"{amount_matches[0]} - {amount_matches[1]}"
+    elif len(amount_matches) == 1:
+        # Exchange-Transaktionen (Typ E, z.B. Spinoffs) haben oft einen
+        # einzelnen exakten Betrag statt einer Range.
+        amount_range = amount_matches[0]
+    else:
+        return None
+
+    # Transaction Type: zuerst als eigenständige Zelle suchen ...
+    type_match = None
+    for cell in cells:
+        if TRANSACTION_TYPE_REGEX.match(cell.strip()):
+            type_match = cell.strip()
+            break
+    # ... Fallback: als eigenständiges Wort irgendwo im Zeilentext
+    # (P/S/E als Ganzwort, nicht Teil eines längeren Tokens wie "OP")
+    if not type_match:
+        word_match = re.search(r"(?<![A-Za-z])[PSE](?![A-Za-z])", full_text)
+        if word_match:
+            type_match = word_match.group(0)
+
+    # Asset-Name: alles vor der Ticker-Klammer aus der Zelle, die den Ticker enthält
+    asset_name = full_text
+    for cell in cells:
+        if ticker_match.group(0) in cell:
+            asset_name = cell.split(ticker_match.group(0))[0].strip(" -\n")
+            break
+
+    # Bei "garbled" Zeilen (v.a. Typ P) landen Owner-Code, Transaction-Type,
+    # Daten und Betrag mit im Asset-Text. Hier wird alles ab dem ersten
+    # "<Typ> <Datum>"-Muster abgeschnitten und ein führender Owner-Code
+    # (SP/JT/DC) entfernt, damit nur der Firmenname übrig bleibt.
+    asset_name = re.split(r"\s+[PSE]\s+\d{2}/\d{2}/\d{4}", asset_name)[0]
+    asset_name = re.sub(r"^(SP|JT|DC)\s+", "", asset_name).strip(" -\n")
+
+    return {
+        "asset": asset_name or "Unbekannt",
+        "ticker": ticker_match.group(1),
+        "transaction_type": type_match or "?",
+        "trade_date": dates[0],
+        "notification_date": dates[1] if len(dates) > 1 else dates[0],
+        "amount_range": amount_range,
+    }
 
 
 # ---------------------------------------------------------------------------

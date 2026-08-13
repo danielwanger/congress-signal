@@ -88,6 +88,10 @@ im Actions-Tab auslösen.
 - PDF-Textextraktion kann bei handschriftlichen/gescannten Filings
   fehlschlagen — betrifft nur einen kleinen Teil der Einreichungen.
 - Kein automatisches Trading — bewusst nur Alerting.
+- Transaktionszeilen, die exakt auf einer Seitengrenze im PDF liegen,
+  können vereinzelt übersehen werden (Tabellen werden pro Seite
+  extrahiert, nicht seitenübergreifend zusammengeführt). Betrifft laut
+  Stichprobe ca. 1 von 18 Zeilen — bekannte Lücke, noch nicht behoben.
 - Nur House-Disclosures (Repräsentantenhaus). Senat-Filings laufen
   über ein separates System (`efdsearch.senate.gov`) und sind hier
   noch nicht eingebunden.
