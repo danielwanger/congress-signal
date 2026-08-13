@@ -231,7 +231,6 @@ def send_telegram_message(text: str) -> bool:
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
-        "parse_mode": "Markdown",
         "disable_web_page_preview": "true",
     }
     response = requests.post(url, data=payload, timeout=15)
@@ -243,7 +242,7 @@ def send_telegram_message(text: str) -> bool:
 
 def format_message(filer: str, tx: dict, source_url: str) -> str:
     return (
-        f"*Neuer Congress-Trade erkannt*\n"
+        f"Neuer Congress-Trade erkannt\n"
         f"👤 {filer}\n"
         f"📈 {tx['ticker']} — {tx['asset'].strip()}\n"
         f"🔁 Typ: {tx['transaction_type']}\n"
