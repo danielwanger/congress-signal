@@ -46,7 +46,7 @@ WATCHLIST = [
     if name.strip()
 ]
 
-FILING_YEAR = os.environ.get("FILING_YEAR", "2026")
+FILING_YEAR = os.environ.get("FILING_YEAR") or "2026"
 BULK_INDEX_URL = f"https://disclosures-clerk.house.gov/public_disc/financial-pdfs/{FILING_YEAR}FD.zip"
 PDF_BASE_URL = f"https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/{FILING_YEAR}"
 
@@ -215,11 +215,17 @@ def parse_transaction_row(row: list) -> dict | None:
 # ---------------------------------------------------------------------------
 # Telegram
 # ---------------------------------------------------------------------------
-def send_telegram_message(text: str) -> None:
+def send_telegram_message(text: str) -> bool:
+    """
+    Gibt True zurück, wenn die Nachricht tatsächlich an Telegram
+    verschickt wurde, sonst False (z.B. wenn nicht konfiguriert).
+    Nur bei True darf die Transaktion als "gesehen" markiert werden —
+    sonst gehen Trades verloren, die nur geloggt statt gesendet wurden.
+    """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("Telegram nicht konfiguriert, Nachricht wird nur geloggt:")
         print(text)
-        return
+        return False
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -230,6 +236,7 @@ def send_telegram_message(text: str) -> None:
     }
     response = requests.post(url, data=payload, timeout=15)
     response.raise_for_status()
+    return True
 
 
 def format_message(filer: str, tx: dict, source_url: str) -> str:
@@ -268,8 +275,9 @@ def main() -> None:
             if tx_id in seen_ids:
                 continue
 
-            send_telegram_message(format_message(filer_name, tx, filing["pdf_url"]))
-            seen_ids.add(tx_id)
+            was_sent = send_telegram_message(format_message(filer_name, tx, filing["pdf_url"]))
+            if was_sent:
+                seen_ids.add(tx_id)
 
     save_seen_ids(seen_ids)
 
