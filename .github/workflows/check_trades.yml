@@ -28,8 +28,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          WATCHLIST: ${{ vars.WATCHLIST }}
-          FILING_YEAR: ${{ vars.FILING_YEAR }}
+          WATCHLIST: ${{ vars.WATCHLIST || 'Pelosi' }}
+          FILING_YEAR: ${{ vars.FILING_YEAR || '2026' }}
         run: python tracker_pdf.py
 
       - name: State-Datei zurückcommitten
