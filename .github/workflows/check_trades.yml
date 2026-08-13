@@ -1,0 +1,41 @@
+name: Check Congress Trades
+
+on:
+  schedule:
+    # Alle 6 Stunden. Cron ist in UTC.
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}  # manuelles Auslösen über die GitHub UI
+
+permissions:
+  contents: write  # nötig, um die State-Datei zurückzucommitten
+
+jobs:
+  check-trades:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repo auschecken
+        uses: actions/checkout@v4
+
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhängigkeiten installieren
+        run: pip install -r requirements.txt
+
+      - name: Tracker ausführen
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          WATCHLIST: ${{ vars.WATCHLIST }}
+          FILING_YEAR: ${{ vars.FILING_YEAR }}
+        run: python tracker_pdf.py
+
+      - name: State-Datei zurückcommitten
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state/seen_filings.json
+          git diff --staged --quiet || git commit -m "Update seen filings state"
+          git push
