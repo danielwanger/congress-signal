@@ -27,6 +27,7 @@ import json
 import os
 import re
 import sys
+import time
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
@@ -51,6 +52,40 @@ BULK_INDEX_URL = f"https://disclosures-clerk.house.gov/public_disc/financial-pdf
 PDF_BASE_URL = f"https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/{FILING_YEAR}"
 
 STATE_FILE = Path(__file__).parent / "state" / "seen_filings.json"
+
+DATA_DIR = Path(__file__).parent / "data"
+COMMITTEE_SECTOR_MAP_FILE = DATA_DIR / "committee_sector_map.json"
+MEMBER_COMMITTEES_FILE = DATA_DIR / "member_committees.json"
+
+
+def load_json_file(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+COMMITTEE_SECTOR_MAP = load_json_file(COMMITTEE_SECTOR_MAP_FILE)
+MEMBER_COMMITTEES = load_json_file(MEMBER_COMMITTEES_FILE)
+
+
+def check_conflict(filer_first: str, filer_last: str, ticker: str) -> str | None:
+    """
+    Prüft, ob der Filer in einem unserer gemappten Ausschüsse sitzt UND
+    der gehandelte Ticker zum Branchen-Mapping dieses Ausschusses passt.
+    Gibt bei Treffer einen kurzen Beschreibungstext zurück, sonst None.
+
+    Matching erfolgt über "Vorname Nachname" gegen die Sync-Daten aus
+    sync_committees.py — siehe dortige Einschränkungen zu Namensabweichungen.
+    """
+    full_name = f"{filer_first} {filer_last}".strip()
+    committee_ids = MEMBER_COMMITTEES.get(full_name, [])
+    for committee_id in committee_ids:
+        mapping = COMMITTEE_SECTOR_MAP.get(committee_id)
+        if mapping and ticker in mapping["tickers"]:
+            sectors = ", ".join(mapping["sectors"])
+            return f"{mapping['committee_name']} — Sektor-Überschneidung: {sectors}"
+    return None
 
 TICKER_REGEX = re.compile(r"\(([A-Z]{1,6})\)")
 DATE_REGEX = re.compile(r"\d{2}/\d{2}/\d{4}")
@@ -83,7 +118,10 @@ def save_seen_ids(ids: set) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Index laden und auf Watchlist + PTR-Typ filtern
+# Index laden — auf PTR-Typ filtern, aber NICHT mehr nach Watchlist.
+# Watchlist entscheidet weiter unten nur noch, wer IMMER gemeldet wird
+# (z.B. Pelosi); alle anderen Filings werden trotzdem geparst, aber nur
+# bei einem Ausschuss/Branchen-Match tatsächlich verschickt.
 # ---------------------------------------------------------------------------
 def fetch_filing_index() -> list[dict]:
     response = requests.get(BULK_INDEX_URL, timeout=60)
@@ -105,8 +143,6 @@ def fetch_filing_index() -> list[dict]:
         year = (member.findtext("Year") or "").strip()
 
         if filing_type != "P":  # nur Periodic Transaction Reports
-            continue
-        if WATCHLIST and not any(name in last.lower() for name in WATCHLIST):
             continue
 
         filings.append(
@@ -254,11 +290,18 @@ def send_telegram_message(text: str) -> bool:
     verschickt wurde, sonst False (z.B. wenn nicht konfiguriert).
     Nur bei True darf die Transaktion als "gesehen" markiert werden —
     sonst gehen Trades verloren, die nur geloggt statt gesendet wurden.
+
+    Telegram limitiert auf grob 1 Nachricht/Sekunde pro Chat. Bei vielen
+    neuen Trades auf einmal (z.B. erster Lauf, oder ein Filing mit
+    vielen Zeilen) reicht das schnell nicht — daher eine kleine Pause
+    vor jedem Send plus automatischer Retry bei HTTP 429.
     """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("Telegram nicht konfiguriert, Nachricht wird nur geloggt:")
         print(text)
         return False
+
+    time.sleep(1)  # einfache Drosselung, um 429 gar nicht erst zu provozieren
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -266,29 +309,43 @@ def send_telegram_message(text: str) -> bool:
         "text": text,
         "disable_web_page_preview": "true",
     }
-    response = requests.post(url, data=payload, timeout=15)
-    if not response.ok:
-        print(f"Telegram-API-Fehler ({response.status_code}): {response.text}")
-    response.raise_for_status()
-    return True
+
+    for attempt in range(3):
+        response = requests.post(url, data=payload, timeout=15)
+        if response.status_code == 429:
+            retry_after = response.json().get("parameters", {}).get("retry_after", 3)
+            print(f"Telegram Rate-Limit erreicht, warte {retry_after}s (Versuch {attempt + 1}/3)...")
+            time.sleep(retry_after + 1)
+            continue
+        if not response.ok:
+            print(f"Telegram-API-Fehler ({response.status_code}): {response.text}")
+        response.raise_for_status()
+        return True
+
+    print("Telegram-Nachricht nach 3 Versuchen weiterhin rate-limited, überspringe.")
+    return False
 
 
-def format_message(filer: str, tx: dict, source_url: str) -> str:
+
+def format_message(filer: str, tx: dict, source_url: str, conflict: str | None = None) -> str:
     owner_label = {
         "SP": "Ehepartner",
         "JT": "Gemeinsames Konto",
         "DC": "Kind",
-        "Filer": filer,
-    }.get(tx["owner_code"], tx["owner_code"])
+    }.get(tx["owner_code"])
+
+    header = f"👤 {filer}" if owner_label is None else f"👤 {filer} ({owner_label})"
 
     lines = [
         "Neuer Congress-Trade erkannt",
-        f"👤 {filer} ({owner_label})",
+        header,
         f"📈 {tx['ticker']} — {tx['asset'].strip()} [{tx['asset_type']}]",
         f"🔁 Typ: {tx['transaction_type']}",
         f"💰 Betrag (Range): {tx['amount_range']}",
         f"🗓 Trade-Datum: {tx['trade_date']}",
     ]
+    if conflict:
+        lines.append(f"🚩 Match: {conflict}")
     if tx["notification_date"] != tx["trade_date"]:
         lines.append(f"📬 Gemeldet am: {tx['notification_date']}")
     if tx["description"]:
@@ -304,10 +361,14 @@ def format_message(filer: str, tx: dict, source_url: str) -> str:
 def main() -> None:
     seen_ids = load_seen_ids()
     filings = fetch_filing_index()
-    print(f"{len(filings)} PTR-Filings passend zur Watchlist gefunden.")
+    print(f"{len(filings)} PTR-Filings insgesamt gefunden (alle Mitglieder).")
 
+    sent_count = 0
     for filing in filings:
         filer_name = f"{filing['first']} {filing['last']}".strip()
+        is_watchlisted = bool(WATCHLIST) and any(
+            name in filing["last"].lower() for name in WATCHLIST
+        )
 
         try:
             transactions = extract_transactions(filing["pdf_url"])
@@ -322,10 +383,23 @@ def main() -> None:
             if tx_id in seen_ids:
                 continue
 
-            was_sent = send_telegram_message(format_message(filer_name, tx, filing["pdf_url"]))
+            conflict = check_conflict(filing["first"], filing["last"], tx["ticker"])
+
+            # Nur senden, wenn entweder auf der Watchlist (z.B. Pelosi,
+            # immer gemeldet) ODER ein Ausschuss/Branchen-Match vorliegt.
+            # Alle anderen Trades werden geparst, aber bewusst nicht
+            # verschickt — kein Alert-Spam für alle 435 Mitglieder.
+            if not is_watchlisted and not conflict:
+                continue
+
+            was_sent = send_telegram_message(
+                format_message(filer_name, tx, filing["pdf_url"], conflict)
+            )
             if was_sent:
                 seen_ids.add(tx_id)
+                sent_count += 1
 
+    print(f"{sent_count} Nachrichten verschickt (Watchlist + Conflict-Matches).")
     save_seen_ids(seen_ids)
 
 

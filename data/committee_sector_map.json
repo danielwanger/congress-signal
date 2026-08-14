@@ -1,0 +1,17 @@
+{
+  "HSIF": {
+    "committee_name": "House Committee on Energy and Commerce",
+    "sectors": ["Healthcare", "Pharma"],
+    "tickers": ["PFE", "MRK", "JNJ", "ABBV", "LLY", "UNH", "CVS", "BMY", "AMGN", "GILD"]
+  },
+  "HSAS": {
+    "committee_name": "House Committee on Armed Services",
+    "sectors": ["Defense"],
+    "tickers": ["LMT", "RTX", "NOC", "GD", "BA", "LHX", "HII"]
+  },
+  "HSBA": {
+    "committee_name": "House Committee on Financial Services",
+    "sectors": ["Banking", "Finance"],
+    "tickers": ["JPM", "BAC", "GS", "MS", "WFC", "C", "SCHW"]
+  }
+}

@@ -24,6 +24,9 @@ jobs:
       - name: Abhängigkeiten installieren
         run: pip install -r requirements.txt
 
+      - name: Committee-Daten synchronisieren
+        run: python sync_committees.py
+
       - name: Tracker ausführen
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
