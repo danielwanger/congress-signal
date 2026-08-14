@@ -2,16 +2,41 @@
   "HSIF": {
     "committee_name": "House Committee on Energy and Commerce",
     "sectors": ["Healthcare", "Pharma"],
-    "tickers": ["PFE", "MRK", "JNJ", "ABBV", "LLY", "UNH", "CVS", "BMY", "AMGN", "GILD"]
+    "tickers": [
+      "ABT", "ABBV", "A", "ALGN", "BAX", "BDX", "TECH", "BIIB", "BSX", "BMY",
+      "CAH", "COR", "CNC", "CRL", "CI", "COO", "CVS", "DHR", "DVA", "DXCM",
+      "EW", "ELV", "GEHC", "GILD", "HCA", "HSIC", "IDXX", "INCY", "PODD",
+      "ISRG", "IQV", "JNJ", "LH", "LLY", "MCK", "MDT", "MRK", "MTD", "MRNA",
+      "UNH", "VEEV", "VTR", "VTRS", "WAT", "WST", "ZBH", "ZTS", "UHS", "STE",
+      "SYK", "SOLV", "RVTY", "RMD", "REGN", "PFE",
+      "AGIO", "ARQT", "ATRC", "BBIO", "CRNX", "CYTK", "EXAS", "ICLR", "INSM",
+      "MEDP", "PCVX", "RARE", "SUPN", "TNDM", "VCYT"
+    ]
   },
   "HSAS": {
     "committee_name": "House Committee on Armed Services",
-    "sectors": ["Defense"],
-    "tickers": ["LMT", "RTX", "NOC", "GD", "BA", "LHX", "HII"]
+    "sectors": ["Defense", "Aerospace"],
+    "tickers": [
+      "AXON", "BA", "GD", "GE", "HWM", "HII", "LHX", "LMT", "NOC", "RTX",
+      "TDG", "TXT",
+      "AVAV", "BWXT", "DRS"
+    ]
   },
   "HSBA": {
     "committee_name": "House Committee on Financial Services",
     "sectors": ["Banking", "Finance"],
-    "tickers": ["JPM", "BAC", "GS", "MS", "WFC", "C", "SCHW"]
+    "tickers": [
+      "AFL", "ALL", "AXP", "AIG", "AMP", "AON", "APO", "ACGL", "ARES", "BAC",
+      "BRK.B", "BLK", "BX", "XYZ", "BNY", "BRO", "COF", "CBOE", "C", "CFG",
+      "CME", "CPAY", "SCHW", "CB", "CINF", "COIN", "ERIE", "EG", "FDS", "FIS",
+      "FITB", "FISV", "BEN", "GPN", "GL", "GS", "HIG", "IBKR", "ICE", "IVZ",
+      "JKHY", "JPM", "KEY", "KKR", "L", "MTB", "MRSH", "MA", "MET", "MCO",
+      "MS", "MSCI", "NDAQ", "NTRS", "PYPL", "PFG", "PGR", "RJF", "STT", "SYF",
+      "TROW", "TFC", "TRV", "USB", "V", "WRB", "WTW", "WFC", "HBAN", "RF",
+      "AJG",
+      "ALLY", "ARCC", "BK", "CATY", "COLB", "EFC", "FCNCA", "FULT", "GBCI",
+      "HLI", "HMN", "HTGC", "INDB", "LPLA", "MKL", "MKTX", "SEI", "SSNC",
+      "TCBI", "VLY"
+    ]
   }
 }
