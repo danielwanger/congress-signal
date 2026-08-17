@@ -35,7 +35,7 @@ import requests
 # Wiederverwendung der bereits verifizierten Parsing-Logik
 from tracker_pdf import extract_transactions
 
-START_YEAR = 2014
+START_YEAR = 2015
 END_YEAR = 2026  # inklusive
 
 OUTPUT_FILE = Path(__file__).parent / "data" / f"historical_trades_{START_YEAR}_{END_YEAR}.csv"

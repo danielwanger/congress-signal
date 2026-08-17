@@ -87,11 +87,29 @@ def check_conflict(filer_first: str, filer_last: str, ticker: str) -> str | None
             return f"{mapping['committee_name']} — Sektor-Überschneidung: {sectors}"
     return None
 
-TICKER_REGEX = re.compile(r"\(([A-Z]{1,6})\)")
-DATE_REGEX = re.compile(r"\d{2}/\d{2}/\d{4}")
-TRANSACTION_TYPE_REGEX = re.compile(r"^[PSE]$")
+TICKER_REGEX = re.compile(r"\(([A-Za-z.]{1,7})\)")
+# Case-insensitive (siehe unten) UND mit Punkt im Zeichensatz, weil
+# manche PDFs (unabhängig vom Jahr) eine Small-Caps-Schriftart nutzen,
+# bei der pdfplumber einzelne "kleine Großbuchstaben"-Glyphen als echte
+# Kleinbuchstaben ausliest, z.B. "(SBuX)" statt "(SBUX)". Zusätzlich
+# gibt es echte Ticker mit Punkt (z.B. "BRK.B" für Berkshire Hathaway
+# Class B), die sonst am Regex scheitern würden. Ergebnis wird beim
+# Rückgabe-Dict per .upper() normalisiert.
+DATE_REGEX = re.compile(r"\d{1,2}/\d{1,2}/\d{4}")
+TRANSACTION_TYPE_REGEX = re.compile(r"^[PSEpse]$")
 DOLLAR_AMOUNT_REGEX = re.compile(r"\$[\d,]+")
-ASSET_TYPE_REGEX = re.compile(r"\[([A-Z]{1,4})\]")
+
+
+def normalize_date(date_str: str) -> str:
+    """Sorgt für einheitliches MM/DD/YYYY-Format, auch wenn die
+    Originalzeile z.B. "5/5/2015" statt "05/05/2015" nutzt — sonst
+    landen zwei unterschiedliche Datumsformate in derselben CSV-Spalte."""
+    try:
+        month, day, year = date_str.split("/")
+        return f"{int(month):02d}/{int(day):02d}/{year}"
+    except (ValueError, AttributeError):
+        return date_str
+ASSET_TYPE_REGEX = re.compile(r"\[([A-Za-z]{1,4})\]")
 OWNER_CODE_REGEX = re.compile(r"(?<![A-Za-z])(SP|JT|DC)(?![A-Za-z])")
 PARTIAL_REGEX = re.compile(r"\(partial\)", re.IGNORECASE)
 # "D" gefolgt von Steuerzeichen (Font-Encoding-Artefakt in den PDFs)
@@ -200,7 +218,8 @@ def parse_transaction_row(row: list) -> dict | None:
     if not ticker_match:
         return None  # keine Aktie in dieser Zeile (z.B. Header oder Fußnote)
 
-    dates = DATE_REGEX.findall(full_text)
+    dates_raw = DATE_REGEX.findall(full_text)
+    dates = [normalize_date(d) for d in dates_raw]
     if len(dates) < 1:
         return None
 
@@ -222,14 +241,14 @@ def parse_transaction_row(row: list) -> dict | None:
     type_match = None
     for cell in cells:
         if TRANSACTION_TYPE_REGEX.match(cell.strip()):
-            type_match = cell.strip()
+            type_match = cell.strip().upper()
             break
     # ... Fallback: als eigenständiges Wort irgendwo im Zeilentext
     # (P/S/E als Ganzwort, nicht Teil eines längeren Tokens wie "OP")
     if not type_match:
-        word_match = re.search(r"(?<![A-Za-z])[PSE](?![A-Za-z])", full_text)
+        word_match = re.search(r"(?<![A-Za-z])[PSEpse](?![A-Za-z])", full_text)
         if word_match:
-            type_match = word_match.group(0)
+            type_match = word_match.group(0).upper()
 
     # "(partial)"-Zusatz bei Teilverkäufen z.B. "S (partial)"
     if type_match and PARTIAL_REGEX.search(full_text):
@@ -240,7 +259,7 @@ def parse_transaction_row(row: list) -> dict | None:
     asset_type_match = ASSET_TYPE_REGEX.search(
         full_text[ticker_match.end():ticker_match.end() + 20]
     )
-    asset_type = asset_type_match.group(1) if asset_type_match else "?"
+    asset_type = asset_type_match.group(1).upper() if asset_type_match else "?"
 
     # Owner-Code: SP=Ehepartner, JT=Gemeinsam, DC=Kind, sonst Filer selbst
     owner_match = OWNER_CODE_REGEX.search(full_text)
@@ -272,7 +291,7 @@ def parse_transaction_row(row: list) -> dict | None:
         "asset": asset_name or "Unbekannt",
         "asset_type": asset_type,
         "owner_code": owner_code,
-        "ticker": ticker_match.group(1),
+        "ticker": ticker_match.group(1).upper(),
         "transaction_type": type_match or "?",
         "trade_date": dates[0],
         "notification_date": dates[1] if len(dates) > 1 else dates[0],
