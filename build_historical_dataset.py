@@ -35,7 +35,7 @@ import requests
 # Wiederverwendung der bereits verifizierten Parsing-Logik
 from tracker_pdf import extract_transactions
 
-START_YEAR = 2020
+START_YEAR = 2014
 END_YEAR = 2026  # inklusive
 
 OUTPUT_FILE = Path(__file__).parent / "data" / f"historical_trades_{START_YEAR}_{END_YEAR}.csv"
@@ -52,6 +52,24 @@ def fetch_filing_index_for_year(year: int) -> list[dict]:
     Wie fetch_filing_index() in tracker_pdf.py, aber für ein beliebiges
     Jahr statt der global konfigurierten FILING_YEAR — und OHNE
     Watchlist-Filter, da wir hier den kompletten Datensatz wollen.
+
+    Das XML-Schema hat sich über die Jahre geändert:
+    - Ab ca. 2015: FilingType == "P" kennzeichnet PTR-Filings.
+    - 2012/2013: FilingType kennt kein "P", DisclosureType == "PTR"
+      wird stattdessen genutzt. ABER: Die zugehörigen PDF-URLs unter
+      ptr-pdfs/{jahr}/{doc_id}.pdf lieferten in einem Testlauf für
+      2013 durchgängig 404 (alle 2318 Filings) — vermutlich ein
+      anderer/nicht digitalisierter URL-Pfad für diese frühe Ära.
+      Deshalb bewusst NICHT ab 2012, sondern erst ab 2014 gezogen.
+      Der DisclosureType-Filter bleibt trotzdem als Fallback im Code,
+      falls einzelne spätere Jahre ihn noch brauchen.
+
+    Bekannte Einschränkung für Jahre vor ca. 2018: Manche PTR-PDFs sind
+    eingescannte Bilder ohne extrahierbaren Text (keine OCR eingebaut)
+    und liefern dann 0 Transaktionen trotz erfolgreichem Download.
+    Zusätzlich fehlen bei älteren Formularen die [ST]/[OP]-Kennzeichnung
+    und der "Description"-Text strukturell — das ist keine Parsing-
+    Lücke, sondern in den Originaldokumenten schlicht nicht vorhanden.
     """
     url = f"https://disclosures-clerk.house.gov/public_disc/financial-pdfs/{year}FD.zip"
     pdf_base = f"https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/{year}"
@@ -71,9 +89,11 @@ def fetch_filing_index_for_year(year: int) -> list[dict]:
         last = (member.findtext("Last") or "").strip()
         first = (member.findtext("First") or "").strip()
         filing_type = (member.findtext("FilingType") or "").strip()
+        disclosure_type = (member.findtext("DisclosureType") or "").strip()
         doc_id = (member.findtext("DocID") or "").strip()
 
-        if filing_type != "P":
+        is_ptr = (filing_type == "P") or (disclosure_type == "PTR")
+        if not is_ptr:
             continue
 
         filings.append(
